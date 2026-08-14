@@ -30,10 +30,6 @@ export function useInspectorBehavior() {
   )
   const [selectedContext, setSelectedContext] = useAtom(selectedContextAtom)
 
-  const applySelectedContext = useEffectEvent(() =>
-    setSelectedContext(hoveredContext),
-  )
-
   const onEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => {
     if (e.key !== 'Escape') return
 
@@ -68,13 +64,21 @@ export function useInspectorBehavior() {
       } catch {}
     }
 
-    function onClick(e: MouseEvent) {
+    async function onClick(e: MouseEvent) {
       const target = e.target as HTMLElement | null
-      if (portalContainer.contains(target)) return
+      if (!target || portalContainer.contains(target)) return
 
       e.stopPropagation()
       e.preventDefault()
-      applySelectedContext()
+
+      // Resolve the context for the clicked element directly instead of
+      // reusing the hovered context: the hovered context is set by an async
+      // fiber walk, so clicking right after moving can select a stale
+      // (or null) context on the first few interactions.
+      try {
+        const ctx = await getComponentContext(target, root)
+        setSelectedContext(ctx)
+      } catch {}
     }
 
     document.addEventListener('mousemove', onMouseMove, { passive: true })

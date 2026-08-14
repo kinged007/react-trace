@@ -95,11 +95,29 @@ async function resolveSource(source: RawSource): Promise<RawSource | null> {
   if (original.source == null || original.line == null) return null
 
   return {
-    fileName: original.source,
+    fileName: resolveMappedFileName(original.source, source.fileName),
     lineNumber: original.line,
     columnNumber: original.column != null ? original.column + 1 : 1,
   }
 }
+
+/**
+ * Trace maps may store relative source names (e.g. Vite dev inline maps use
+ * "button.tsx"). Resolve them against the source file's URL so path
+ * enrichment can reconstruct the absolute path.
+ */
+function resolveMappedFileName(mapped: string, baseFile: string): string {
+  if (/^[a-z]+:\/\//i.test(mapped) || mapped.startsWith('/')) return mapped
+  try {
+    return new URL(mapped, baseFile).href
+  } catch {
+    return mapped
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fiber traversal
+// ---------------------------------------------------------------------------
 
 const FiberTags = {
   FunctionComponent: 0,

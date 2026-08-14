@@ -7,7 +7,7 @@ import {
 } from '@react-trace/ui-components'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   portalContainerAtom,
@@ -107,6 +107,18 @@ function entryStyle(active: boolean): React.CSSProperties {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+const POPUP_PADDING = 8
+const POPUP_SIDE_OFFSET = 8
+
+type PopupPlacement = {
+  side: 'top' | 'bottom'
+  sideOffset: number
+  collisionAvoidance?:
+    | { side: 'shift'; align: 'shift' }
+    | undefined
+}
+
 // Component
 // ---------------------------------------------------------------------------
 
@@ -117,6 +129,74 @@ export function ActionPanel({ plugins }: ActionPanelProps) {
   const groups = selectedContext
     ? groupChain(projectRoot, selectedContext.all)
     : []
+  const anchorElement = selectedContext?.element ?? null
+
+  // Keep the popup fully inside the viewport: place it below the selected
+  // element when it fits, above it when it fits, and centered over the
+  // element (clamped by shift) when neither side has enough room — e.g. when
+  // a large container is selected near the middle of the screen.
+  const popupObserverRef = useRef<ResizeObserver | null>(null)
+  const [popupHeight, setPopupHeight] = useState(0)
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null)
+
+  // The popup mounts asynchronously (portal + transition), so measure it with
+  // a ref callback instead of an effect.
+  const measurePopupRef = useCallback((el: HTMLDivElement | null) => {
+    if (popupObserverRef.current) {
+      popupObserverRef.current.disconnect()
+      popupObserverRef.current = null
+    }
+    if (!el) return
+    const measure = () => setPopupHeight(el.offsetHeight)
+    measure()
+    popupObserverRef.current = new ResizeObserver(measure)
+    popupObserverRef.current.observe(el)
+  }, [])
+
+  useEffect(() => {
+    if (!anchorElement) {
+      setAnchorRect(null)
+      return
+    }
+    const update = () => {
+      const rect = anchorElement.getBoundingClientRect()
+      setAnchorRect(rect)
+    }
+    update()
+    window.addEventListener('scroll', update, { capture: true, passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, { capture: true })
+      window.removeEventListener('resize', update)
+    }
+  }, [anchorElement])
+
+  const placement = useMemo<PopupPlacement>(() => {
+    if (!anchorRect || popupHeight === 0) {
+      return { side: 'bottom', sideOffset: POPUP_SIDE_OFFSET }
+    }
+    const viewportHeight = window.innerHeight
+    const fitsBelow =
+      anchorRect.bottom + POPUP_SIDE_OFFSET + POPUP_PADDING + popupHeight <=
+      viewportHeight
+    const fitsAbove =
+      anchorRect.top - POPUP_SIDE_OFFSET - POPUP_PADDING - popupHeight >= 0
+    if (fitsBelow || fitsAbove) {
+      return {
+        side: fitsBelow ? 'bottom' : 'top',
+        sideOffset: POPUP_SIDE_OFFSET,
+        collisionAvoidance: { side: 'shift', align: 'shift' },
+      }
+    }
+    // Neither side fits — center the popup over the selected element. The
+    // negative sideOffset positions it on top of the element and `shift`
+    // clamps it to the viewport.
+    return {
+      side: 'top',
+      sideOffset: -(anchorRect.height + popupHeight) / 2,
+      collisionAvoidance: { side: 'shift', align: 'shift' },
+    }
+  }, [anchorRect, popupHeight])
 
   const onClose = useCallback(
     () => setSelectedContext(null),
@@ -132,15 +212,17 @@ export function ActionPanel({ plugins }: ActionPanelProps) {
     >
       <Popover.Portal container={portalContainer}>
         <Popover.Positioner
-          anchor={selectedContext?.element}
-          side="bottom"
+          anchor={anchorElement}
+          side={placement.side}
           align="start"
-          sideOffset={8}
-          collisionPadding={8}
+          sideOffset={placement.sideOffset}
+          collisionAvoidance={placement.collisionAvoidance}
+          collisionPadding={POPUP_PADDING}
           positionMethod="fixed"
           style={{ pointerEvents: 'auto', zIndex: 999999 }}
         >
           <Popover.Popup
+            ref={measurePopupRef}
             initialFocus={false}
             style={{
               minWidth: 280,
